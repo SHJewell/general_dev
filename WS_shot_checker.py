@@ -196,7 +196,7 @@ class projectData:
     def genReport(self):
         pass
 
-    def reorgSheets(self):
+    def reorganizeSheets(self):
 
         for date in self.master["FILE_DATE"].unique():
             sub_df = self.master[self.master["FILE_DATE"] == date]
@@ -207,14 +207,14 @@ class projectData:
                 oper_df = sub_df[sub_df["OPER"] == oper]
                 name = f"shots_{oper}_{date}.csv"
 
-                self.exportReorgSheets[name] = oper_df
+                self.reorgSheets[name] = oper_df
 
 
     def exportReorgSheets(self, path):
 
-        if not self.exportReorgSheets:
+        if not self.reorgSheets:
 
-            self.reorgSheets()
+            self.reorganizeSheets()
 
         for name, df in self.reorgSheets.items():
 
