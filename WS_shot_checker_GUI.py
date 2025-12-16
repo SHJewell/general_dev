@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLineEdit, QLabel,
                              QTextEdit, QFileDialog, QTabWidget, QTableWidget,
@@ -13,28 +14,53 @@ from WS_shot_checker import projectData
 
 class WorkerThread(QThread):
     """Worker thread for processing data without freezing the GUI"""
-    progress = pyqtSignal(str)
+    progress = pyqtSignal(int, str)  # Changed to include percentage
     finished = pyqtSignal(bool, str)
 
     def __init__(self, project, operation):
         super().__init__()
         self.project = project
         self.operation = operation
+        self.start_time = None
+
+    def progress_callback(self, percentage, message):
+        """Callback for progress updates with time estimation"""
+        if self.start_time is None:
+            self.start_time = time.time()
+
+        elapsed = time.time() - self.start_time
+
+        if percentage > 0:
+            estimated_total = elapsed / (percentage / 100.0)
+            remaining = estimated_total - elapsed
+
+            if remaining > 60:
+                time_str = f"{int(remaining / 60)}m {int(remaining % 60)}s remaining"
+            else:
+                time_str = f"{int(remaining)}s remaining"
+
+            full_message = f"{message} - {time_str}"
+        else:
+            full_message = message
+
+        self.progress.emit(percentage, full_message)
 
     def run(self):
         try:
+            self.start_time = time.time()
+
             if self.operation == 'find_files':
-                self.progress.emit("Searching for shot files...")
-                self.project.findShotFiles()
+                self.progress.emit(0, "Starting file search...")
+                self.project.findShotFiles(progress_callback=self.progress_callback)
                 self.finished.emit(True, f"Found {len(self.project.files)} files")
 
             elif self.operation == 'compile_master':
-                self.progress.emit("Compiling master data...")
+                self.progress.emit(0, "Compiling master data...")
                 self.project.compileMaster()
                 self.finished.emit(True, f"Compiled {len(self.project.master)} records")
 
             elif self.operation == 'check_all':
-                self.progress.emit("Running all validation checks...")
+                self.progress.emit(0, "Running all validation checks...")
                 self.project.checkDateConsistency()
                 self.finished.emit(True, "All checks completed")
 
@@ -77,6 +103,8 @@ class ShotCheckerGUI(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("")
+        self.progress_bar.setRange(0, 100)  # Set range for percentage
+        self.progress_bar.setValue(0)
         main_layout.addWidget(self.progress_bar)
 
         # Action buttons
@@ -153,21 +181,21 @@ class ShotCheckerGUI(QMainWindow):
 
     def browse_and_load_project(self):
         """Open file dialog to select project directory, initialize project, and find files"""
-        directory = QFileDialog.getExistingDirectory(
+        self.directory = QFileDialog.getExistingDirectory(
             self, "Select Project Directory", ""
         )
-        if not directory:
+        if not self.directory:
             return
 
-        self.path_input.setText(directory)
+        self.path_input.setText(self.directory)
 
-        if not os.path.exists(directory):
+        if not os.path.exists(self.directory):
             QMessageBox.warning(self, "Invalid Path", "The selected path does not exist.")
             return
 
         # Initialize project
-        self.project = projectData(directory)
-        self.log(f"Project initialized with path: {directory}")
+        self.project = projectData(self.directory)
+        self.log(f"Project initialized with path: {self.directory}")
         self.statusBar().showMessage("Project loaded, finding files...")
 
         # Automatically find files
@@ -185,9 +213,10 @@ class ShotCheckerGUI(QMainWindow):
         if not self.project or not self.project.files:
             return
 
-        files_text = f"Total files found: {len(self.project.files)}\n\n"
+        files_text = (f"Total files found: {len(self.project.files)}\n"
+                      f"    Base folder: {self.directory}\n\n")
         for i, file in enumerate(self.project.files, 1):
-            files_text += f"{i}. {file}\n"
+            files_text += f"{i}. {file.replace(self.directory, "")}\n"
 
         self.files_tab.setPlainText(files_text)
         self.tabs.setCurrentIndex(0)  # Switch to files tab
@@ -204,6 +233,7 @@ class ShotCheckerGUI(QMainWindow):
             self.log(f"ERROR: {message}")
 
         self.progress_bar.setFormat("")
+        self.progress_bar.setValue(0)
 
     def compile_master(self):
         """Compile master dataframe from all files"""
@@ -233,6 +263,7 @@ class ShotCheckerGUI(QMainWindow):
             self.log(f"ERROR: {message}")
 
         self.progress_bar.setFormat("")
+        self.progress_bar.setValue(0)
         self.compile_btn.setEnabled(True)
 
     def display_data_preview(self):
@@ -280,6 +311,7 @@ class ShotCheckerGUI(QMainWindow):
             self.log(f"ERROR: {message}")
 
         self.progress_bar.setFormat("")
+        self.progress_bar.setValue(0)
         self.validate_btn.setEnabled(True)
 
     def display_validation_results(self):
@@ -290,7 +322,7 @@ class ShotCheckerGUI(QMainWindow):
             for mismatch in self.project.date_mismatches:
                 date_text += f"File: {mismatch['file']}\n"
                 date_text += f"  File Date: {mismatch['file_date']}\n"
-                date_text += f"  Data Dates: {', '.join(mismatch['data_dates'])}\n\n"
+                date_text += f"  Dates present in data: {', '.join(mismatch['data_dates'])}\n\n"
             self.date_text.setPlainText(date_text)
             self.log(f"Found {len(self.project.date_mismatches)} date mismatches")
         else:
@@ -354,8 +386,9 @@ class ShotCheckerGUI(QMainWindow):
         finally:
             self.progress_bar.setFormat("")
 
-    def update_progress(self, message):
-        """Update progress bar message"""
+    def update_progress(self, percentage, message):
+        """Update progress bar with percentage and message"""
+        self.progress_bar.setValue(percentage)
         self.progress_bar.setFormat(message)
 
     def log(self, message):

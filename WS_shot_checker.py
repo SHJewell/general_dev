@@ -15,7 +15,7 @@ class projectData:
         self.RINchecks = list()
         self.operatorChecks = list()
 
-        self.reorgSheets = dict()
+        self.reorgedDFs = dict()
 
         # self.date_mismatches = self.checkDateConsistency()
 
@@ -23,12 +23,23 @@ class projectData:
                     "GTIME"]
         self.pattern = r'(?<![0-9])(?:\d{4}|\d{2})-\d{2}-\d{2}(?![0-9])'
 
-    def findShotFiles(self):
+    def findShotFiles(self, progress_callback=None):
         seen_basenames = set()  # Track basenames to avoid duplicates
         csvs = list()
         zips = list()
 
+        # First pass: count total directories to estimate progress
+        total_dirs = sum(1 for _ in os.walk(self.path))
+        current_dir = 0
+
         for root, dirs, files in os.walk(self.path):
+            current_dir += 1
+
+            # Report progress
+            if progress_callback:
+                progress_pct = int((current_dir / total_dirs) * 100)
+                progress_callback(progress_pct, f"Searching directory {current_dir}/{total_dirs}: {os.path.basename(root)}")
+
             for file in files:
                 # Check for CSV shot files
                 if "shots" in file.lower() and ("circuit" not in file.lower()) and file.endswith('.csv'):
@@ -101,34 +112,6 @@ class projectData:
 
         self.master = master.copy(deep=True)
         self.master.insert(0, "DATETIME", pd.to_datetime(self.master["DATE"] + ' ' + self.master["TIME"]))
-
-        # master = pd.read_csv(self.files[0])
-        # dates = re.findall(self.pattern, os.path.basename(self.files[0]))
-        #
-        # if dates:
-        #     master.insert(0, "FILE_DATE", dates[0])
-        # else:
-        #     master.insert(0, "FILE_DATE", "")
-        #
-        # filecol = [os.path.basename(self.files[0])] * len(master)
-        # master.insert(0, "SOURCE_FILE", filecol)
-        #
-        # for sf in self.files[1:]:
-        #     df = pd.read_csv(os.path.join(self.path, sf))
-        #     dates = re.findall(self.pattern, sf)
-        #
-        #     if dates:
-        #         df.insert(0, "FILE_DATE", dates[0])
-        #     else:
-        #         df.insert(0, "FILE_DATE", "")
-        #
-        #     filecol = [os.path.basename(sf)] * len(df)
-        #     df.insert(0, "SOURCE_FILE", filecol)
-        #
-        #     master = pd.concat([master, df], ignore_index=True)
-        #
-        # self.master = master.copy(deep=True)
-        # self.master.insert(0, "DATETIME", pd.to_datetime(self.master["DATE"] + ' ' + self.master["TIME"]))
 
     def checkDateConsistency(self):
         self.date_mismatches = list()
@@ -205,23 +188,23 @@ class projectData:
             for oper in sub_df["OPER"].unique():
 
                 oper_df = sub_df[sub_df["OPER"] == oper]
-                name = f"shots_{oper}_{date}.csv"
+                name = f"shots_{oper[:oper.find("@")]}_{date}.csv"
 
-                self.reorgSheets[name] = oper_df
+                self.reorgedDFs[name] = oper_df
 
 
     def exportReorgSheets(self, path):
 
-        if not self.reorgSheets:
+        if not self.reorgedDFs:
 
             self.reorganizeSheets()
 
-        for name, df in self.reorgSheets.items():
+        for name, df in self.reorgedDFs.items():
 
             out_path = os.path.join(path, name)
             df.to_csv(out_path, index=False)
 
-        print(f"Reorganized {len(self.files)} into {len(self.reorgSheets)} files.")
+        print(f"Reorganized {len(self.files)} into {len(self.reorgedDFs)} files.")
 
 
 def main():
@@ -231,8 +214,9 @@ def main():
     project.findShotFiles()
     project.compileMaster()
     project.checkDateConsistency()
+    project.reorganizeSheets()
 
-    # project.exportReorgSheets(r"E:\JGS\Willowstick\Development\Data Validation\Jackpile Reorg")
+    # project.exportreorgedDFs(r"E:\JGS\Willowstick\Development\Data Validation\Jackpile Reorg")
 
     pprint(project.checkOperator())
     pprint(project.checkRIN())
